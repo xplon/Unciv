@@ -73,6 +73,10 @@ class WorldWrapMapTests {
         civ.exploredRegion.setMapParameters(game.tileMap.mapParameters)
         reveal(known)
         view = GameView(game.gameInfo, civ, spectatorMode = spectator)
+        createHolder()
+    }
+
+    private fun createHolder() {
         val screen = Mockito.mock(WorldScreen::class.java)
         val stage = Mockito.mock(Stage::class.java)
         Mockito.`when`(stage.width).thenReturn(1200f)
@@ -160,6 +164,49 @@ class WorldWrapMapTests {
     }
 
     @Test
+    fun animatedScrollKeepsItsLogicalTargetWhenCutMoves() {
+        createMap(4..8)
+        val from = holder.tileGroups.getValue(view.tileMapView.getTile(tile(6)))
+        val target = holder.tileGroups.getValue(view.tileMapView.getTile(tile(7)))
+        holder.scrollX = from.x + from.width / 2
+        holder.scrollTo(target.x + target.width / 2, holder.scrollY)
+        holder.act(0.1f)
+        val relativeX = from.x - holder.scrollX
+
+        reveal(9..14)
+        invokeInternal(holder, "updateWorldWrap", view.civView)
+        assertEquals(relativeX, from.x - holder.scrollX, 0.001f)
+        holder.act(0.5f)
+        assertEquals(target.x + target.width / 2, holder.scrollX, 0.001f)
+    }
+
+    @Test
+    fun screenRestoreKeepsCameraPositionWhenNewHolderChoosesAnotherCut() {
+        createMap(4..8)
+        reveal(9..10)
+        invokeInternal(holder, "updateWorldWrap", view.civView)
+        val anchor = holder.tileGroups.getValue(view.tileMapView.getTile(tile(6)))
+        holder.scrollX = anchor.x + anchor.width / 2
+        val relativeX = anchor.x - holder.scrollX
+        val oldCut = readField(holder, "worldWrapCut")
+        val state = WorldScreen.RestoreState(holder, civ.civID, civ.civID, false)
+
+        createHolder()
+        assertNotEquals(oldCut, readField(holder, "worldWrapCut"))
+        invokeInternal(holder, "setMapScrollX", state.mapScrollX)
+        holder.updateVisualScroll()
+        val restoredAnchor = holder.tileGroups.getValue(view.tileMapView.getTile(tile(6)))
+        assertEquals(relativeX, restoredAnchor.x - holder.scrollX, 0.001f)
+
+        reveal(11..19)
+        createHolder()
+        assertNull(readField(holder, "worldWrapCut"))
+        invokeInternal(holder, "setMapScrollX", state.mapScrollX)
+        val completedAnchor = holder.tileGroups.getValue(view.tileMapView.getTile(tile(6)))
+        assertEquals(relativeX, completedAnchor.x - holder.scrollX, 0.001f)
+    }
+
+    @Test
     fun pendingOrderKeepsItsSideWhenExplorationMovesTheDisplayedTarget() {
         createMap(4..8)
         val unit = game.addDefaultMeleeUnitWithUniques(civ, tile(6))
@@ -183,10 +230,15 @@ class WorldWrapMapTests {
     fun completedHorizontalExplorationRestoresContinuousWrapping() {
         createMap(4..8)
         assertFalse(holder.continuousScrollingX)
+        val target = holder.tileGroups.getValue(view.tileMapView.getTile(tile(7)))
+        holder.scrollX = target.x - 60f
+        holder.scrollTo(target.x + target.width / 2, holder.scrollY)
         reveal(9..19)
         assertNull(civ.exploredRegion.getWorldWrapCut())
         invokeInternal(holder, "updateWorldWrap", view.civView)
         assertTrue(holder.continuousScrollingX)
+        holder.act(0.5f)
+        assertEquals(target.x + target.width / 2, holder.scrollX, 0.001f)
         val positions = holder.tileGroups.values.map { it.x }
         holder.scrollX = holder.maxX
         drawMap()

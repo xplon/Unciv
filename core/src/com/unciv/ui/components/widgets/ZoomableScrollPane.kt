@@ -347,6 +347,13 @@ open class ZoomableScrollPane(
 
     fun isScrolling(): Boolean = scrollingAction != null && actions.any { it == scrollingAction }
 
+    /** Stop an animated scroll without changing the current viewport. */
+    protected fun stopScrolling() {
+        removeAction(scrollingAction)
+        scrollingAction = null
+        scrollingTo = null
+    }
+
     /** Get the scrolling destination if currently scrolling, else the current scroll position. */
     fun scrollingDestination(): Vector2 {
         return if (isScrolling()) scrollingTo!! else Vector2(scrollX, scrollY)
@@ -371,7 +378,7 @@ open class ZoomableScrollPane(
     fun scrollTo(x: Float, y: Float, immediately: Boolean = false): Boolean {
         if (scrollingDestination() == Vector2(x, y)) return false
 
-        removeAction(scrollingAction)
+        stopScrolling()
 
         if (immediately) {
             scrollX = x

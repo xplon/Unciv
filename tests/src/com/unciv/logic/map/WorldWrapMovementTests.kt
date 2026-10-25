@@ -150,6 +150,21 @@ class WorldWrapMovementTests(private val algorithm: PathfindingAlgorithm) {
     }
 
     @Test
+    fun newlyRevealedTerrainInvalidatesManualPathEstimate() {
+        setMovement(12)
+        val wall = game.tileMap.values.filter { rightwardCut.getColumn(it.position) == 9 }
+        for (tile in wall) game.setTileTerrain(tile.position, "Mountain")
+        val manualMovement = movement()
+        val destination = tile(12)
+        assertTrue(manualMovement.getShortestPath(destination).isNotEmpty())
+        assertTrue(manualMovement.getDistanceToTiles().containsKey(destination))
+
+        for (tile in wall) tile.setExplored(civ, true)
+        assertTrue(manualMovement.getShortestPath(destination).isEmpty())
+        assertFalse(manualMovement.getDistanceToTiles().containsKey(destination))
+    }
+
+    @Test
     fun multiTurnOrderKeepsItsDirectionAndStopsAtRevealedObstacle() {
         for (tile in game.tileMap.values) {
             if (rightwardCut.getColumn(tile.position) == 9)

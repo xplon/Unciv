@@ -220,6 +220,11 @@ class Civilization : IsPartOfGameInfoSerialization {
     // Limit camera within explored region
     var exploredRegion = ExploredRegion()
 
+    /** Invalidates path estimates when another unit reveals previously unknown terrain. */
+    @Transient
+    @Volatile
+    var explorationRevision = 0
+
     @Readonly fun hasExplored(tile: Tile) = tile.isExplored(this)
 
     val lastSeenImprovement = LastSeenImprovement()

@@ -21,6 +21,7 @@ data class PathingMapCacheKey(
     val startingPoint: HexCoord,
     val moveRemaining: FixedPointMovement,
     val fullMove: FixedPointMovement,
+    val explorationRevision: Int = 0,
 ) {
     override fun toString() = "$startingPoint/$moveRemaining/$fullMove"
 }

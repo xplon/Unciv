@@ -529,7 +529,7 @@ class WorldScreen(
         val fogOfWar: Boolean
     ) {
         val zoom = mapHolder.scaleX
-        val scrollX = mapHolder.scrollX
+        val mapScrollX = mapHolder.mapScrollX
         val scrollY = mapHolder.scrollY
     }
     
@@ -544,7 +544,7 @@ class WorldScreen(
         if (viewingCiv.civID != restoreState.viewingCivName) return
         
         mapHolder.zoom(restoreState.zoom)
-        mapHolder.scrollX = restoreState.scrollX
+        mapHolder.mapScrollX = restoreState.mapScrollX
         mapHolder.scrollY = restoreState.scrollY
         mapHolder.updateVisualScroll()
 

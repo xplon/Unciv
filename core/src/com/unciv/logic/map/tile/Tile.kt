@@ -1193,9 +1193,10 @@ class Tile : IsPartOfGameInfoSerialization {
     }
 
     fun setExplored(player: Civilization, isExplored: Boolean, explorerPosition: HexCoord? = null) {
+        val wasExplored = exploredBy.contains(player.civID)
         if (isExplored) {
             // Disable the undo button if a new tile has been explored
-            if (!exploredBy.contains(player.civID)) {
+            if (!wasExplored) {
                 GUI.clearUndoCheckpoints()
                 exploredBy = exploredBy.withItem(player.civID)
             }
@@ -1205,6 +1206,7 @@ class Tile : IsPartOfGameInfoSerialization {
         } else {
             exploredBy = exploredBy.withoutItem(player.civID)
         }
+        if (wasExplored != isExplored) player.explorationRevision++
     }
 
     /**

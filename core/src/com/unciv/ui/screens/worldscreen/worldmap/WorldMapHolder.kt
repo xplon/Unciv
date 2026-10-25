@@ -73,6 +73,11 @@ class WorldMapHolder(
         private set
     private var movementPreviewRevision = 0
 
+    /** Camera X in the canonical map layout, suitable for restoring with a different cut. */
+    internal var mapScrollX: Float
+        get() = tileGroupMap.toCanonicalX(scrollX)
+        set(value) { scrollX = tileGroupMap.fromCanonicalX(value) }
+
     lateinit var currentTileSetStrings: TileSetStrings
 
     init {
@@ -127,6 +132,9 @@ class WorldMapHolder(
     internal fun updateWorldWrap(civView: CivView) {
         val cut = if (worldScreen.selectedGameView.spectatorMode) null else civView.getWorldWrapCut(worldWrapCut)
         if (cut != worldWrapCut) {
+            val scrollTarget = if (isScrolling()) scrollingDestination().cpy() else null
+            if (scrollTarget != null) scrollTarget.x = tileGroupMap.toCanonicalX(scrollTarget.x)
+            stopScrolling()
             val anchor = tileGroups.values.filter { civView.hasExplored(it.tileView) }
                 .minByOrNull { abs(it.x + it.width / 2 - scrollX) }
             val oldAnchorX = anchor?.x ?: 0f
@@ -139,6 +147,8 @@ class WorldMapHolder(
             tileGroupMap.setWorldWrapCut(cut)
             if (anchor != null) setScrollX(oldScrollX + anchor.x - oldAnchorX)
             updateVisualScroll()
+            if (scrollTarget != null)
+                scrollTo(tileGroupMap.fromCanonicalX(scrollTarget.x), scrollTarget.y)
         }
         val region = civView.getCiv().exploredRegion
         region.calculateStageCoords(maxX, maxY, cut)

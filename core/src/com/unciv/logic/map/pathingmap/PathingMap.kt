@@ -519,6 +519,7 @@ class PathingMap(
                     unit.currentTile.position,
                     fpmFromMovement(unit.currentMovement).coerceAtMost(escort?.currentMovement?.toFixedPointMove() ?: MAX_MOVE_THIS_TURN),
                     fpmFromMovement(selfFullMove.coerceAtMost(if (escort != null) otherUntilFullMove else MAX_VALID_TURNS)),
+                    if (worldWrapCut != null) unit.civ.explorationRevision else 0,
                     )
             }
             return PathingMap(

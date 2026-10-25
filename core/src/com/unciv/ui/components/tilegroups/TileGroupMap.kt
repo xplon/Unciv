@@ -226,6 +226,17 @@ class TileGroupMap<T: TileGroup>(
         drawTopX = width
     }
 
+    /** Convert displayed X to the canonical map layout, independent of the current cut. */
+    fun toCanonicalX(x: Float): Float {
+        val cut = worldWrapCut ?: return x
+        return (x + cut.firstColumn * 1.5f * 0.8f * groupSize - bottomX).mod(width)
+    }
+
+    fun fromCanonicalX(x: Float): Float {
+        val cut = worldWrapCut ?: return x
+        return (x - cut.firstColumn * 1.5f * 0.8f * groupSize + bottomX).mod(width)
+    }
+
     private fun moveTileBy(index: Int, dx: Float) {
         for (mapLayer in allMapLayers) {
             val tileLayer = (mapLayer as? TileMapLayer<*>)?.tileLayers?.get(index) ?: continue
