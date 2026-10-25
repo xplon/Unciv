@@ -10,6 +10,7 @@ import com.badlogic.gdx.utils.Align
 import com.unciv.Constants
 import com.unciv.logic.automation.unit.UnitAutomation
 import com.unciv.logic.map.HexCoord
+import com.unciv.logic.map.WorldWrapCut
 import com.unciv.logic.map.mapunit.MapUnit
 import com.unciv.models.UncivSound
 import com.unciv.models.translations.tr
@@ -38,7 +39,8 @@ const val smallerCircleSizes = 25f
 
 class MoveHereOverlayButtonData(
     val unitToTurnsToDestination: HashMap<MapUnitView, Int>,
-    val tileView: TileView
+    val tileView: TileView,
+    val worldWrapCut: WorldWrapCut? = null
 ) : OverlayButtonData {
     override fun createButton(worldMapHolder: WorldMapHolder): Actor {
         return getMoveHereButton(worldMapHolder)
@@ -74,7 +76,7 @@ class MoveHereOverlayButtonData(
         if (unitsThatCanMove.isEmpty()) moveHereButton.color.a = 0.5f
         else {
             moveHereButton.onActivation(UncivSound.Silent) {
-                worldMapHolder.moveUnitToTargetTile(unitsThatCanMove, tileView)
+                worldMapHolder.moveUnitToTargetTile(unitsThatCanMove, tileView, worldWrapCut)
             }
             moveHereButton.keyShortcuts.add(KeyCharAndCode.TAB)
         }

@@ -11,6 +11,7 @@ import com.unciv.logic.battle.Nuke
 import com.unciv.logic.battle.TargetHelper
 import com.unciv.logic.civilization.Civilization
 import com.unciv.logic.map.MapPathing
+import com.unciv.logic.map.WorldWrapCut
 import com.unciv.logic.map.mapunit.MapUnit
 import com.unciv.logic.map.mapunit.PossibleUpgrade
 import com.unciv.logic.map.mapunit.actions.UnitActions
@@ -73,6 +74,7 @@ class MapUnitView internal constructor(
     // This is pure UI and should be migrated somewhere where it can be shared by both its usages
     @Readonly fun getMovementString(): String = unit.getMovementString()
     @Readonly fun getMovementDestination(): TileView = gameView.tileMapView.getTile(unit.getMovementDestination())
+    @Readonly fun getMovementWorldWrapCut(): WorldWrapCut? = unit.getMovementWorldWrapCut()
     val action: String? get() = unit.action
     @Readonly fun isEscorting(): Boolean = unit.isEscorting()
     @Readonly fun isAutomated(): Boolean = unit.isAutomated()
@@ -84,19 +86,20 @@ class MapUnitView internal constructor(
     @Readonly fun hasDisappeared(): Boolean = unit !in unit.getTile().getUnits()
 
     /** @throws com.unciv.logic.map.mapunit.movement.UnitMovement.UnreachableDestinationException if no tile can be reached this turn towards [targetTileView] */
-    @Readonly fun getTileToMoveToThisTurn(targetTileView: TileView): TileView =
-        gameView.tileMapView.getTile(unit.movement.getTileToMoveToThisTurn(targetTileView.unwrap()))
+    @Readonly fun getTileToMoveToThisTurn(targetTileView: TileView, worldWrapCut: WorldWrapCut? = null): TileView =
+        gameView.tileMapView.getTile(unit.movement.withWorldWrapCut(worldWrapCut).getTileToMoveToThisTurn(targetTileView.unwrap()))
     /** Tiles this unit can reach this turn, with the total movement needed to get there. */
     @Readonly fun getDistanceToTiles(): Map<TileView, Float> =
         unit.movement.getDistanceToTiles().entries.associate { gameView.tileMapView.getTile(it.key) to it.value.totalMovement }
-    @Readonly fun getPathToTile(tileView: TileView): List<TileView> =
-        unit.movement.getDistanceToTiles().getPathToTile(tileView.unwrap()).map { gameView.tileMapView.getTile(it) }
+    @Readonly fun getPathToTile(tileView: TileView, worldWrapCut: WorldWrapCut? = null): List<TileView> =
+        unit.movement.withWorldWrapCut(worldWrapCut).getDistanceToTiles().getPathToTile(tileView.unwrap()).map { gameView.tileMapView.getTile(it) }
     @Readonly fun getRoadPath(tileView: TileView): List<TileView>? =
         unit.movement.getRoadPath(tileView.unwrap())?.map { gameView.tileMapView.getTile(it) }
     @Readonly fun canPassThrough(tileView: TileView): Boolean = unit.movement.canPassThrough(tileView.unwrap())
-    @Readonly fun canReach(tileView: TileView): Boolean = unit.movement.canReach(tileView.unwrap())
-    @Readonly fun getShortestPath(tileView: TileView): List<TileView> =
-        unit.movement.getShortestPath(tileView.unwrap()).map { gameView.tileMapView.getTile(it) }
+    @Readonly fun canReach(tileView: TileView, worldWrapCut: WorldWrapCut? = null): Boolean =
+        unit.movement.withWorldWrapCut(worldWrapCut).canReach(tileView.unwrap())
+    @Readonly fun getShortestPath(tileView: TileView, worldWrapCut: WorldWrapCut? = null): List<TileView> =
+        unit.movement.withWorldWrapCut(worldWrapCut).getShortestPath(tileView.unwrap()).map { gameView.tileMapView.getTile(it) }
     @Readonly fun canSwapTo(tileView: TileView): Boolean = unit.movement.canUnitSwapTo(tileView.unwrap())
     // All "prepare and then choose tile" logic is actually UI stuff, and should be migrated out of logic layer
     @Readonly fun canMoveTo(tileView: TileView): Boolean = unit.movement.canMoveTo(tileView.unwrap())
@@ -110,8 +113,8 @@ class MapUnitView internal constructor(
         TargetHelper.containsAttackableEnemy(tileView.unwrap(), MapUnitCombatant(unit))
     @Readonly fun maxAttacksPerTurn(): Int = unit.maxAttacksPerTurn()
     @Readonly fun cannotMove(): Boolean = unit.cache.cannotMove
-    @Readonly fun getReachableTilesInCurrentTurn(): List<TileView> =
-        unit.movement.getReachableTilesInCurrentTurn().map { gameView.tileMapView.getTile(it) }.toList()
+    @Readonly fun getReachableTilesInCurrentTurn(worldWrapCut: WorldWrapCut? = null): List<TileView> =
+        unit.movement.withWorldWrapCut(worldWrapCut).getReachableTilesInCurrentTurn().map { gameView.tileMapView.getTile(it) }.toList()
     /** Defensive bonus of [tile] as seen by this unit - unit-specific uniques of the improvement are taken into account */
     @Readonly fun getDefensiveBonusOn(tile: TileView, includeImprovementBonus: Boolean = true): Float =
         tile.unwrap().getDefensiveBonus(includeImprovementBonus, unit)
@@ -179,13 +182,12 @@ class MapUnitView internal constructor(
         unit.action = null
         return true
     }
-    fun tryHeadTowards(tileView: TileView): Boolean {
-        unit.movement.headTowards(tileView.unwrap())
+    fun tryHeadTowards(tileView: TileView, worldWrapCut: WorldWrapCut? = null): Boolean {
+        unit.movement.withWorldWrapCut(worldWrapCut).headTowards(tileView.unwrap())
         return true
     }
-    fun trySetMoveToAction(tileView: TileView): Boolean {
-        val position = tileView.position()
-        unit.action = "moveTo ${position.x},${position.y}"
+    fun trySetMoveToAction(tileView: TileView, worldWrapCut: WorldWrapCut? = null): Boolean {
+        unit.setMoveToAction(tileView.unwrap(), worldWrapCut)
         return true
     }
     /** Moves [unit] to [attackableTileView], handles siege setup, and returns `true` if an attack is still possible. */
@@ -214,8 +216,8 @@ class MapUnitView internal constructor(
         unit.fortifyIfCan()
         return true
     }
-    fun tryMoveToTile(tileView: TileView): Boolean {
-        unit.movement.moveToTile(tileView.unwrap())
+    fun tryMoveToTile(tileView: TileView, worldWrapCut: WorldWrapCut? = null): Boolean {
+        unit.movement.withWorldWrapCut(worldWrapCut).moveToTile(tileView.unwrap())
         return true
     }
 

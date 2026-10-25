@@ -385,7 +385,11 @@ class WorldScreen(
             displayTutorialsOnUpdate()
 
             updateSelectedCiv()
+        }
 
+        mapHolder.updateWorldWrap(getGameViewConsideringForOfWar().civView)
+
+        if (uiEnabled) {
             bottomUnitTable.update()
 
             minimapWrapper.update(getGameViewConsideringForOfWar().civView.getCiv())

@@ -15,12 +15,15 @@ import com.badlogic.gdx.scenes.scene2d.actions.Actions
 import com.badlogic.gdx.scenes.scene2d.ui.Table
 import com.badlogic.gdx.utils.Align
 import com.badlogic.gdx.math.Interpolation
+import com.badlogic.gdx.math.Vector2
+import com.badlogic.gdx.scenes.scene2d.actions.MoveToAction
 import com.badlogic.gdx.scenes.scene2d.*
 import com.unciv.UncivGame
 import com.unciv.logic.map.*
 import com.unciv.logic.map.mapunit.movement.UnitMovement
 import com.unciv.models.UncivSound
 import com.unciv.view.ForeignCityView
+import com.unciv.view.CivView
 import com.unciv.view.GameView
 import com.unciv.view.MapUnitView
 import com.unciv.view.SpyView
@@ -47,6 +50,7 @@ import com.unciv.utils.Concurrency
 import com.unciv.utils.Log
 import com.unciv.utils.launchOnGLThread
 import java.lang.Float.max
+import kotlin.math.abs
 
 
 class WorldMapHolder(
@@ -64,6 +68,10 @@ class WorldMapHolder(
     internal val unitConnectRoadPaths: HashMap<MapUnitView, List<TileView>> = HashMap()
 
     private lateinit var tileGroupMap: TileGroupMap<WorldTileGroup>
+
+    internal var worldWrapCut: WorldWrapCut? = null
+        private set
+    private var movementPreviewRevision = 0
 
     lateinit var currentTileSetStrings: TileSetStrings
 
@@ -103,7 +111,7 @@ class WorldMapHolder(
         currentTileSetStrings = tileSetStrings
         val tileMapView = worldScreen.selectedGameView.tileMapView
         val tileGroupsNew = tileMap.values.map { WorldTileGroup(tileMapView.getTile(it), tileSetStrings) }
-        tileGroupMap = TileGroupMap(this, tileGroupsNew, continuousScrollingX)
+        tileGroupMap = TileGroupMap(this, tileGroupsNew, tileMap.mapParameters.worldWrap)
 
         for (tileGroup in tileGroupsNew) tileGroups[tileGroup.tileView] = tileGroup
 
@@ -112,7 +120,33 @@ class WorldMapHolder(
         actor = tileGroupMap
         setSize(worldScreen.stage.width, worldScreen.stage.height)
         layout() // Fit the scroll pane to the contents - otherwise, setScroll won't work!
+        updateWorldWrap(worldScreen.selectedGameView.civView)
     }
+
+    /** Exploration can move the cut, but panning must never move tiles to another copy. */
+    internal fun updateWorldWrap(civView: CivView) {
+        val cut = if (worldScreen.selectedGameView.spectatorMode) null else civView.getWorldWrapCut(worldWrapCut)
+        if (cut != worldWrapCut) {
+            val anchor = tileGroups.values.filter { civView.hasExplored(it.tileView) }
+                .minByOrNull { abs(it.x + it.width / 2 - scrollX) }
+            val oldAnchorX = anchor?.x ?: 0f
+            val oldScrollX = scrollX
+            worldWrapCut = cut
+            continuousScrollingX = tileMap.mapParameters.worldWrap && cut == null
+            removeUnitActionOverlay()
+            unitMovementPaths.clear()
+            movementPreviewRevision++
+            tileGroupMap.setWorldWrapCut(cut)
+            if (anchor != null) setScrollX(oldScrollX + anchor.x - oldAnchorX)
+            updateVisualScroll()
+        }
+        val region = civView.getCiv().exploredRegion
+        region.calculateStageCoords(maxX, maxY, cut)
+        onViewportChanged()
+    }
+
+    private fun getMovementCut(unit: MapUnitView): WorldWrapCut? =
+        if (unit.isAirUnit() || unit.isPreparingParadrop()) null else worldWrapCut
 
     private fun addClickListener() {
         // ActivationListener-like listener to allow us to create only one listener for the entire worldmapholder instead of one per tile
@@ -132,7 +166,7 @@ class WorldMapHolder(
                         if (!UncivGame.Current.settings.longTapMove) return
                         val unit = worldScreen.bottomUnitTable.selectedUnit
                             ?: return
-                        onTileRightClicked(unit, child.tileView)
+                        onTileRightClicked(unit, child.tileView, getMovementCut(unit))
                     }
                 }
             }
@@ -150,8 +184,9 @@ class WorldMapHolder(
                 val child = tileGroupMap.hit(x, y, true) ?: return false
                 if (child !is WorldTileGroup) return false
 
+                val movementCut = getMovementCut(unit)
                 Concurrency.run("WorldScreenClick") {
-                    onTileRightClicked(unit, child.tileView)
+                    onTileRightClicked(unit, child.tileView, movementCut)
                 }
                 return true
             }
@@ -161,6 +196,7 @@ class WorldMapHolder(
     }
 
     fun onTileClicked(tileView: TileView) {
+        movementPreviewRevision++
         removeUnitActionOverlay()
         selectedTile = tileView
         unitMovementPaths.clear()
@@ -224,12 +260,13 @@ class WorldMapHolder(
         worldScreen.shouldUpdate = true
     }
 
-    private fun onTileRightClicked(unitView: MapUnitView, tileView: TileView) {
+    private fun onTileRightClicked(unitView: MapUnitView, tileView: TileView, movementCut: WorldWrapCut?) {
         if (unitView.getTile() == tileView) return
         removeUnitActionOverlay()
         selectedTile = tileView
         unitMovementPaths.clear()
         unitConnectRoadPaths.clear()
+        movementPreviewRevision++
         if (!worldScreen.canChangeState) return
 
         // Concurrency might open up a race condition window - if worldScreen.shouldUpdate is on too
@@ -265,9 +302,9 @@ class WorldMapHolder(
                 if (defenderCombatant != null)
                     worldScreen.battleAnimationDeferred(attackerCombatant, damageToAttacker, defenderCombatant, damageToDefender)
                 localShouldUpdate = true
-            } else if (unitView.canReach(tileView)) {
+            } else if (unitView.canReach(tileView, movementCut)) {
                 /** ****** Right-click Move ****** */
-                moveUnitToTargetTile(listOf(unitView), tileView)
+                moveUnitToTargetTile(listOf(unitView), tileView, movementCut)
                 localShouldUpdate = true
             }
         }
@@ -279,7 +316,8 @@ class WorldMapHolder(
         UncivGame.Current.settings.addCompletedTutorialTask(key)
     }
 
-    internal fun moveUnitToTargetTile(selectedUnits: List<MapUnitView>, targetTileView: TileView) {
+    internal fun moveUnitToTargetTile(selectedUnits: List<MapUnitView>, targetTileView: TileView,
+                                      worldWrapCut: WorldWrapCut? = this.worldWrapCut) {
         // this can take a long time, because of the unit-to-tile calculation needed, so we put it in a different thread
         // THIS PART IS REALLY ANNOYING
         // So lets say you have 2 units you want to move in the same direction, right
@@ -289,6 +327,7 @@ class WorldMapHolder(
         // and then calling the function again but without the unit that moved.
 
         val selectedUnitView = selectedUnits.first()
+        val movementCut = if (selectedUnitView.isAirUnit() || selectedUnitView.isPreparingParadrop()) null else worldWrapCut
         markUnitMoveTutorialComplete(selectedUnitView) // not too expensive to have it repeat too often
 
         Concurrency.run("TileToMoveTo") {
@@ -298,9 +337,9 @@ class WorldMapHolder(
             val tileToMoveToView: TileView
             var pathToTileViews: List<TileView>? = null
             try {
-                tileToMoveToView = selectedUnitView.getTileToMoveToThisTurn(targetTileView)
+                tileToMoveToView = selectedUnitView.getTileToMoveToThisTurn(targetTileView, movementCut)
                 if (!selectedUnitView.isAirUnit() && !selectedUnitView.isPreparingParadrop())
-                    pathToTileViews = selectedUnitView.getPathToTile(tileToMoveToView)
+                    pathToTileViews = selectedUnitView.getPathToTile(tileToMoveToView, movementCut)
             } catch (ex: Exception) {
                 when (ex) {
                     is UnitMovement.UnreachableDestinationException -> {
@@ -324,7 +363,7 @@ class WorldMapHolder(
                     // I can't think of any way to avoid this,
                     // but it's so rare and edge-case-y that ignoring its failure is actually acceptable, hence the empty catch
                     val previousTileView = selectedUnitView.getTile()
-                    selectedUnitView.tryMoveToTile(tileToMoveToView)
+                    selectedUnitView.tryMoveToTile(tileToMoveToView, movementCut)
 
                     // If you try to send a unit to a tile that it can't even get nearer to, then this is actualy a dud
                     if (previousTileView == selectedUnitView.getTile()){
@@ -336,20 +375,22 @@ class WorldMapHolder(
                         selectedUnitView.tryResetAction() // remove explore on manual move
                     SoundPlayer.play(UncivSound.Whoosh)
                     if (selectedUnitView.getTile() != targetTileView)
-                        selectedUnitView.trySetMoveToAction(targetTileView)
+                        selectedUnitView.trySetMoveToAction(targetTileView, movementCut)
                     if (selectedUnitView.hasMovement()) worldScreen.bottomUnitTable.selectUnit(selectedUnitView)
 
                     worldScreen.shouldUpdate = true
 
                     if (pathToTileViews != null) {
-                        animateMovement(previousTileView, selectedUnitView, tileToMoveToView, pathToTileViews)
+                        val reachedTile = selectedUnitView.getTile()
+                        val actualPath = pathToTileViews.take(pathToTileViews.indexOf(reachedTile) + 1)
+                        animateMovement(previousTileView, selectedUnitView, reachedTile, actualPath)
                         if (selectedUnitView.isEscorting()) {
-                            animateMovement(previousTileView, selectedUnitView.getOtherEscortUnit()!!, tileToMoveToView, pathToTileViews)
+                            animateMovement(previousTileView, selectedUnitView.getOtherEscortUnit()!!, reachedTile, actualPath)
                         }
                     }
 
                     if (selectedUnits.size > 1) { // We have more tiles to move
-                        moveUnitToTargetTile(selectedUnits.subList(1, selectedUnits.size), targetTileView)
+                        moveUnitToTargetTile(selectedUnits.subList(1, selectedUnits.size), targetTileView, worldWrapCut)
                     } else removeUnitActionOverlay() //we're done here
 
                     if (UncivGame.Current.settings.autoUnitCycle && !selectedUnitView.hasMovement())
@@ -368,6 +409,7 @@ class WorldMapHolder(
         targetTileView: TileView,
         pathToTile: List<TileView>
     ) {
+        if (pathToTile.isEmpty()) return
         val tileGroup = tileGroups[previousTileView]!!
 
         // Steal the current sprites to our new group
@@ -383,17 +425,21 @@ class WorldMapHolder(
         unitSpriteAndIcon.addAction(
             Actions.sequence(
                 Actions.run {
+                    unitSpriteAndIcon.setPosition(tileGroup.x, tileGroup.y)
                     // Disable the final tile, so we won't have one image "merging into" the other
                     // Can only be done after the new group has been updated, to get the spriteGroup
                     val targetTileSpriteSlot = tileGroups[targetTileView]!!.layerUnitArt.getSpriteSlot(selectedUnit)
                     targetTileSpriteSlot?.spriteGroup?.isVisible = false
                 },
                 *pathToTile.map { tileView ->
-                    Actions.moveTo(
-                        tileGroups[tileView]!!.x,
-                        tileGroups[tileView]!!.y,
-                        0.5f / pathToTile.size
-                    )
+                    object : MoveToAction() {
+                        init { duration = 0.5f / pathToTile.size }
+                        override fun begin() {
+                            val targetGroup = tileGroups[tileView]!!
+                            setPosition(targetGroup.x, targetGroup.y)
+                            super.begin()
+                        }
+                    }
                 }.toTypedArray(),
                 Actions.run {
                     // Re-enable the final tile
@@ -423,6 +469,8 @@ class WorldMapHolder(
     }
 
     private fun addTileOverlaysWithUnitMovement(selectedUnits: List<MapUnitView>, tileView: TileView) {
+        val cut = worldWrapCut
+        val revision = movementPreviewRevision
         Concurrency.run("TurnsToGetThere") {
             /** LibGdx sometimes has these weird errors when you try to edit the UI layout from 2 separate threads.
              * And so, all UI editing will be done on the main thread.
@@ -431,6 +479,7 @@ class WorldMapHolder(
              */
 
             val unitToTurnsToTile = HashMap<MapUnitView, Int>()
+            val paths = HashMap<MapUnitView, ArrayList<TileView>>()
             for (unitView in selectedUnits) {
                 val shortestPath = ArrayList<TileView>()
                 val turnsToGetThere = if (unitView.isAirUnit()) {
@@ -441,14 +490,16 @@ class WorldMapHolder(
                     else 0
                 } else {
                     // this is the most time-consuming call
-                    shortestPath.addAll(unitView.getShortestPath(tileView))
+                    shortestPath.addAll(unitView.getShortestPath(tileView, cut))
                     shortestPath.size
                 }
-                unitMovementPaths[unitView] = shortestPath
+                paths[unitView] = shortestPath
                 unitToTurnsToTile[unitView] = turnsToGetThere
             }
 
             launchOnGLThread {
+                if (revision != movementPreviewRevision) return@launchOnGLThread
+                unitMovementPaths.putAll(paths)
                 val unitsWhoCanMoveThere = HashMap(unitToTurnsToTile.filter { it.value != 0 })
                 if (unitsWhoCanMoveThere.isEmpty()) { // give the regular tile overlays with no unit movement
                     addTileOverlays(tileView)
@@ -462,12 +513,12 @@ class WorldMapHolder(
                     // single turn instant move
                     val selectedUnitView = unitsWhoCanMoveThere.keys.first()
                     for (unitView in unitsWhoCanMoveThere.keys) {
-                        unitView.tryHeadTowards(tileView)
+                        unitView.tryHeadTowards(tileView, getMovementCut(unitView))
                     }
                     worldScreen.bottomUnitTable.selectUnit(selectedUnitView) // keep moved unit selected
                 } else {
                     // add "move to" button if there is a path to tileInfo
-                    val moveHereButtonDto = MoveHereOverlayButtonData(unitsWhoCanMoveThere, tileView)
+                    val moveHereButtonDto = MoveHereOverlayButtonData(unitsWhoCanMoveThere, tileView, cut)
                     addTileOverlays(tileView, moveHereButtonDto)
                 }
                 worldScreen.shouldUpdate = true
@@ -583,7 +634,20 @@ class WorldMapHolder(
 
     /** Add an arrow to draw on the next update. */
     fun addArrow(fromTileView: TileView, toTileView: TileView, arrowType: MapArrowType) {
-        tileGroups[fromTileView]?.layerMisc?.addArrow(toTileView, arrowType)
+        val fromGroup = tileGroups[fromTileView] ?: return
+        val toGroup = tileGroups[toTileView] ?: return
+        val relativePosition = if (worldWrapCut == null) null
+            else Vector2(toGroup.x - fromGroup.x, toGroup.y - fromGroup.y).scl(1f / (0.8f * TileGroupMap.groupSize))
+        fromGroup.layerMisc.addArrow(toTileView, arrowType, relativePosition)
+    }
+
+    /** A pending order can still refer to the old side of a cut moved by new exploration. */
+    internal fun isMovementDestinationOnDisplayedCopy(unitView: MapUnitView): Boolean {
+        val displayCut = worldWrapCut ?: return true
+        val orderCut = unitView.getMovementWorldWrapCut() ?: return true
+        val from = unitView.getTile().position()
+        val to = unitView.getMovementDestination().position()
+        return displayCut.getColumn(to) - displayCut.getColumn(from) == orderCut.getColumn(to) - orderCut.getColumn(from)
     }
 
     /**
@@ -613,7 +677,7 @@ class WorldMapHolder(
             if (fromTileView != null && unitTileView != null) addArrow(fromTileView, unitTileView, unitView.getMostRecentMoveType())
         }
         for (unitView in targetVisibleUnits) {
-            if (!unitView.isMoving())
+            if (!unitView.isMoving() || worldWrapCut != null && !isMovementDestinationOnDisplayedCopy(unitView))
                 continue
             val toTileView = unitView.getMovementDestination()
             val fromTileView = tileMapView.getTile(unitView.getTile().position()) ?: continue
@@ -719,11 +783,13 @@ class WorldMapHolder(
         if (worldScreen.selectedGameView.spectatorMode) return result
 
         val exploredRegion = worldScreen.selectedGameView.civView.getCiv().exploredRegion
-        if (exploredRegion.shouldRecalculateCoords()) exploredRegion.calculateStageCoords(maxX, maxY)
+        if (exploredRegion.shouldRecalculateCoords()) exploredRegion.calculateStageCoords(maxX, maxY, worldWrapCut)
         if (!exploredRegion.shouldRestrictX()) return result
 
         val leftX = exploredRegion.getLeftX()
         val rightX = exploredRegion.getRightX()
+
+        if (worldWrapCut != null) return result.coerceIn(leftX, rightX)
 
         if (deltaX < 0 && scrollX <= rightX && result > rightX)
             result = rightX
@@ -738,7 +804,7 @@ class WorldMapHolder(
         if (worldScreen.selectedGameView.spectatorMode) return result
 
         val exploredRegion = worldScreen.selectedGameView.civView.getCiv().exploredRegion
-        if (exploredRegion.shouldRecalculateCoords()) exploredRegion.calculateStageCoords(maxX, maxY)
+        if (exploredRegion.shouldRecalculateCoords()) exploredRegion.calculateStageCoords(maxX, maxY, worldWrapCut)
 
         val topY = exploredRegion.getTopY()
         val bottomY = exploredRegion.getBottomY()

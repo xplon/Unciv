@@ -8,6 +8,7 @@ import com.badlogic.gdx.scenes.scene2d.Group
 import com.badlogic.gdx.scenes.scene2d.Touchable
 import com.unciv.logic.map.HexMath
 import com.unciv.logic.map.TileMap
+import com.unciv.logic.map.WorldWrapCut
 import com.unciv.ui.components.tilegroups.layers.*
 import com.unciv.ui.components.widgets.ZoomableScrollPane
 import kotlin.math.max
@@ -59,6 +60,7 @@ class TileGroupMap<T: TileGroup>(
     private var drawBottomX = 0f
 
     private var maxVisibleMapWidth = 0f
+    private var worldWrapCut: WorldWrapCut? = null
 
     /** All top-level layer container groups in render order (bottom to top).
      *  Used by the world-wrap draw path to reposition tile-level actors. */
@@ -209,6 +211,30 @@ class TileGroupMap<T: TileGroup>(
             .scl(1f / trueGroupSize)
     }
 
+    /** Lay out one copy of each tile in an unfolded interval, without rebuilding any layers.
+     * A null cut restores the usual continuously wrapped layout.
+     */
+    fun setWorldWrapCut(cut: WorldWrapCut?) {
+        if (worldWrapCut == cut) return
+        worldWrapCut = cut
+        for ((index, group) in sortedTileGroups.withIndex()) {
+            val x = if (cut == null) HexMath.hex2WorldCoords(group.tileView.position()).x * 0.8f * groupSize - bottomX
+                else (cut.getColumn(group.tileView.position()) - cut.firstColumn) * 1.5f * 0.8f * groupSize
+            moveTileBy(index, x - group.x)
+        }
+        drawBottomX = 0f
+        drawTopX = width
+    }
+
+    private fun moveTileBy(index: Int, dx: Float) {
+        for (mapLayer in allMapLayers) {
+            val tileLayer = (mapLayer as? TileMapLayer<*>)?.tileLayers?.get(index) ?: continue
+            tileLayer.tileX += dx
+            tileLayer.forEachOwnedActor { it.x += dx }
+        }
+        sortedTileGroups[index].x += dx
+    }
+
     override fun act(delta: Float) {
         if (shouldAct)
             super.act(delta)
@@ -243,7 +269,7 @@ class TileGroupMap<T: TileGroup>(
             mapLayer.cullingArea = culling
         }
 
-        if (worldWrap) {
+        if (worldWrap && worldWrapCut == null) {
             // Prevent flickering when zoomed out so you can see entire map
             val visibleMapWidth =
                     if (mapHolder.width > maxVisibleMapWidth) maxVisibleMapWidth
@@ -282,12 +308,7 @@ class TileGroupMap<T: TileGroup>(
                     }
                     if (shouldMove) {
                         val dx = if (beyondRight) width else -width
-                        for (mapLayer in allMapLayers) {
-                            val tl = (mapLayer as? TileMapLayer<*>)?.tileLayers?.get(i) ?: continue
-                            tl.tileX += dx
-                            tl.forEachOwnedActor { it.x += dx }
-                        }
-                        sortedTileGroups[i].x += dx
+                        moveTileBy(i, dx)
                     }
                     newBottomX = min(newBottomX, referenceTileLayer.tileX)
                     newTopX    = max(newTopX,    referenceTileLayer.tileX + groupSize + 4f)

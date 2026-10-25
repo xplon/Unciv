@@ -36,6 +36,7 @@ internal class AStarPathfinder(
     internal val cache: PathingMapCache,
     private val timeLimitTurns: Int,
     private val tileMap: TileMap,
+    private val edgePredicate: (Tile, Tile) -> Boolean = { _, _ -> true },
 ) {
     internal val routeNodes = cache.routeNodes // Actually Array<RouteNode>
     private val initialBufferSize = tileMap.tileMatrix.size + tileMap.tileMatrix[0].size
@@ -268,6 +269,7 @@ internal class AStarPathfinder(
             val currentNode = RouteNode(routeNodes[currentPrioritizedNode.tileIdx])
             val currentTile = currentNode.tile(tileMap)
             for (neighborTile in currentTile.neighbors) { // calculate each neighbor       
+                if (!edgePredicate(currentTile, neighborTile)) continue
                 val foundTargetTile = considerNeighbor(currentNode, neighborTile)
                 if (foundTargetTile != null) return foundTargetTile
             }

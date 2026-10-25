@@ -10,6 +10,7 @@ import com.unciv.logic.map.BFS
 import com.unciv.logic.map.HexCoord
 import com.unciv.logic.map.HexMath
 import com.unciv.logic.map.MapPathing
+import com.unciv.logic.map.WorldWrapCut
 import com.unciv.logic.map.pathingmap.PathingMap
 import com.unciv.logic.map.mapunit.MapUnit
 import com.unciv.logic.map.tile.Tile
@@ -23,6 +24,7 @@ import yairm210.purity.annotations.InternalState
 import yairm210.purity.annotations.LocalState
 import yairm210.purity.annotations.Readonly
 import java.util.BitSet
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * Handles all movement-related logic for a [MapUnit]
@@ -45,13 +47,27 @@ import java.util.BitSet
  *
  * getPathBetweenTiles uses {@link com.unciv.logic.map.BFS} for single-turn pathing to a target.
  */
-class UnitMovement(val unit: MapUnit) {
+class UnitMovement(val unit: MapUnit, private val worldWrapCut: WorldWrapCut? = null) {
 
     @Cache private val pathfindingCache = PathfindingCache(unit)
-    @Cache private val aStarPathing by lazy { PathingMap.createUnitPathingMap(unit) }
-    @Cache private val aStarPathingWithoutZoneControl by lazy { PathingMap.createUnitPathingMap(unit, considerZoneOfControl = false) }
-    @Cache private val aStarPathingWithoutEscort by lazy { PathingMap.createUnitPathingMap(unit, includeEscortUnit = false) }
+    @Cache private val aStarPathing by lazy { PathingMap.createUnitPathingMap(unit, worldWrapCut = worldWrapCut) }
+    @Cache private val aStarPathingWithoutZoneControl by lazy { PathingMap.createUnitPathingMap(unit, considerZoneOfControl = false, worldWrapCut = worldWrapCut) }
+    @Cache private val aStarPathingWithoutEscort by lazy { PathingMap.createUnitPathingMap(unit, includeEscortUnit = false, worldWrapCut = worldWrapCut) }
     @Cache private val roadPathing by lazy { PathingMap.createRoadPathingMap(unit.civ, unit.currentTile) }
+
+    // A manual route has different edges, so must not share the ordinary pathfinding caches.
+    // Retain only the most recent cut, rather than a cache for every possible map boundary.
+    @Cache private val movementWithCut = AtomicReference<UnitMovement?>(null)
+
+    @Readonly
+    fun withWorldWrapCut(cut: WorldWrapCut?): UnitMovement {
+        if (worldWrapCut == cut) return this
+        val cached = movementWithCut.get()
+        if (cached != null && cached.worldWrapCut == cut) return cached
+        val movement = UnitMovement(unit, cut)
+        movementWithCut.set(movement)
+        return movement
+    }
 
     class ParentTileAndTotalMovement(val tile: Tile, val parentTile: Tile, val totalMovement: Float)
 
@@ -106,6 +122,7 @@ class UnitMovement(val unit: MapUnit) {
                 // Loop-invariant across this tile's neighbors: was looked up twice per neighbor below.
                 val tileToCheckMovement = distanceToTiles[tileToCheck]!!.totalMovement
                 for (neighbor in tileToCheck.neighbors) {
+                    if (worldWrapCut?.isCrossing(tileToCheck.position, neighbor.position) == true) continue
                     // ignore this tile
                     if (tilesToIgnoreBitset != null && tilesToIgnoreBitset.get(neighbor.zeroBasedIndex)) continue // ignore this tile
                     var totalDistanceToTile: Float = when {
@@ -297,7 +314,9 @@ class UnitMovement(val unit: MapUnit) {
             return finalDestination
 
         // Someone is blocking to the path to the final tile...
-        val destinationNeighbors = finalDestination.neighbors
+        val destinationNeighbors = finalDestination.neighbors.filter {
+            worldWrapCut?.isCrossing(finalDestination.position, it.position) != true
+        }
         return when (currentTile) {
             in destinationNeighbors -> currentTile // We're right nearby anyway, no need to move
             else -> destinationNeighbors
@@ -358,10 +377,10 @@ class UnitMovement(val unit: MapUnit) {
                     .filter { unit.movement.canParadropOn(it, it.aerialDistanceTo(unit.getTile())) }
             }
             includeOtherEscortUnit && unit.isEscorting() -> {
-                    val otherUnitTiles = unit.getOtherEscortUnit()!!.movement.getReachableTilesInCurrentTurn(false).toSet()
-                    unit.movement.getDistanceToTiles().filter { otherUnitTiles.contains(it.key) }.keys.asSequence()
+                    val otherUnitTiles = unit.getOtherEscortUnit()!!.movement.withWorldWrapCut(worldWrapCut).getReachableTilesInCurrentTurn(false).toSet()
+                    getDistanceToTiles().filter { otherUnitTiles.contains(it.key) }.keys.asSequence()
                 }
-            else -> unit.movement.getDistanceToTiles().keys.asSequence()
+            else -> getDistanceToTiles().keys.asSequence()
         }
     }
 
@@ -581,7 +600,7 @@ class UnitMovement(val unit: MapUnit) {
                 unit.putInTile(tile) // Required for ruins,
 
                 if (escortUnit != null) {
-                    escortUnit.movement.moveToTile(tile)
+                    escortUnit.movement.withWorldWrapCut(worldWrapCut).moveToTile(tile)
                     unit.startEscorting() // Need to re-apply this
                 }
 
@@ -920,6 +939,7 @@ class UnitMovement(val unit: MapUnit) {
     }
 
     fun clearPathfindingCache() {
+        movementWithCut.get()?.clearPathfindingCache()
         pathfindingCache.clear()
         aStarPathing.clear()
         aStarPathingWithoutZoneControl.clear()

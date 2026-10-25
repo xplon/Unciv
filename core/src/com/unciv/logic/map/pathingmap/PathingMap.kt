@@ -15,6 +15,7 @@ import com.unciv.logic.map.MapPathing
 import com.unciv.logic.map.MapPathing.roadPreferredMovementCost
 import com.unciv.logic.map.pathingmap.RouteNode.Companion.MAX_MOVE_THIS_TURN
 import com.unciv.logic.map.TileMap
+import com.unciv.logic.map.WorldWrapCut
 import com.unciv.logic.map.mapunit.MapUnit
 import com.unciv.logic.map.mapunit.movement.MovementCost
 import com.unciv.logic.map.mapunit.movement.PathsToTilesWithinTurn
@@ -82,6 +83,7 @@ class PathingMap(
     private val cost: TileMovementCost,
     private val tileRoadCost: TileRoadCost,
     private val relationshipLevel: (Tile) -> RelationshipLevel,
+    private val edgePredicate: (Tile, Tile) -> Boolean = { _, _ -> true },
 ) {
     @Cache
     private val cacheRef = AtomicReference<PathingMapCache?>(null)
@@ -413,6 +415,7 @@ class PathingMap(
             cache.forkForPathfinding(),
             timeLimitTurns.coerceAtMost(MAX_VALID_TURNS),
             tileMap,
+            edgePredicate,
         )
         finder.stepUntilDestination()
 
@@ -440,6 +443,7 @@ class PathingMap(
             cache.forkForPathfinding(),
             timeLimitTurns.coerceAtMost(MAX_VALID_TURNS),
             tileMap,
+            edgePredicate,
         )
         val result = finder.stepUntilDestination()
 
@@ -498,7 +502,11 @@ class PathingMap(
         val VERBOSE_PATHFINDING_LOGS: HexCoord = NEVER_LOG
 
         @Readonly
-        fun createUnitPathingMap(unit: MapUnit, considerZoneOfControl: Boolean = true, includeEscortUnit: Boolean = true): PathingMap {
+        fun createUnitPathingMap(unit: MapUnit, considerZoneOfControl: Boolean = true, includeEscortUnit: Boolean = true,
+                                 worldWrapCut: WorldWrapCut? = null): PathingMap {
+            // Manual paths on an unfolded map must not reveal unknown terrain through the preview.
+            // Actual movement still checks passability and charges the real cost in UnitMovement.
+            fun isUnknown(tile: Tile) = worldWrapCut != null && !unit.civ.hasExplored(tile)
             val name = if (!considerZoneOfControl) "createUnitPathingMapNoZoc"
                 else if (!includeEscortUnit) "createUnitPathingMapNoEscort"
                 else "createUnitPathingMap"
@@ -518,11 +526,11 @@ class PathingMap(
                 unit,
                 name,
                 getCurrentCacheKey,
-                { unit.movement.cannotPassThroughReason(it, includeEscortUnit) == null },
-                { unit.movement.canMoveTo(it, assumeCanPassThrough = true, allowSwap = false, includeOtherEscortUnit = includeEscortUnit) },
-                { unit.getDamageFromTerrain(it) },
+                { isUnknown(it) || unit.movement.cannotPassThroughReason(it, includeEscortUnit) == null },
+                { isUnknown(it) || unit.movement.canMoveTo(it, assumeCanPassThrough = true, allowSwap = false, includeOtherEscortUnit = includeEscortUnit) },
+                { if (isUnknown(it)) 0 else unit.getDamageFromTerrain(it) },
                 { from, to ->
-                    fpmFromMovement(
+                    if (isUnknown(to)) FixedPointMovement.FPM_ONE else fpmFromMovement(
                         MovementCost.getMovementCostBetweenAdjacentTilesEscort(
                             unit,
                             from,
@@ -532,8 +540,10 @@ class PathingMap(
                         )
                     )
                 },
-                { fpmFromMovement(it.getConnectionStatus(unit.civ).movement) },
-                { tile -> tile.getOwner()?.getDiplomacyManager(unit.civ)?.relationshipIgnoreAfraid() ?: RelationshipLevel.Favorable }
+                { if (isUnknown(it)) FixedPointMovement.FPM_ONE else fpmFromMovement(it.getConnectionStatus(unit.civ).movement) },
+                { tile -> if (isUnknown(tile)) RelationshipLevel.Favorable
+                    else tile.getOwner()?.getDiplomacyManager(unit.civ)?.relationshipIgnoreAfraid() ?: RelationshipLevel.Favorable },
+                { from, to -> worldWrapCut?.isCrossing(from.position, to.position) != true }
             )
         }
 

@@ -9,6 +9,7 @@ import com.unciv.logic.map.HexMath.getLongitude
 import com.unciv.logic.map.HexMath.worldFromLatLong
 import com.unciv.logic.map.MapParameters
 import com.unciv.logic.map.MapShape
+import com.unciv.logic.map.WorldWrapCut
 import com.unciv.ui.components.tilegroups.TileGroupMap
 import yairm210.purity.annotations.Readonly
 import kotlin.math.abs
@@ -91,6 +92,23 @@ class ExploredRegion : IsPartOfGameInfoSerialization {
     @Readonly
     fun isEmpty() = topLeft == Vector2.Zero && bottomRight == Vector2.Zero
 
+    /** Keep the cut stable while it is still in the unexplored horizontal interval.
+     * The completion condition is the same one used by [calculateStageCoords].
+     */
+    @Readonly
+    fun getWorldWrapCut(previous: WorldWrapCut? = null): WorldWrapCut? {
+        if (!worldWrap || bottomRight.x - topLeft.x == 1f) return null
+        val width = (mapRadius * 2).toInt()
+        if (width <= 0) return null
+        val left = -topLeft.x.toInt()
+        val knownWidth = (topLeft.x - bottomRight.x).toInt().mod(width) + 1
+        if (previous != null && previous.width == width
+            && (previous.firstColumn - left).mod(width) >= knownWidth)
+            return previous
+        val firstColumn = (left + knownWidth + (width - knownWidth) / 2).mod(width)
+        return WorldWrapCut(firstColumn, width)
+    }
+
     // Check if tilePosition is beyond explored region
     fun checkTilePosition(tilePosition: HexCoord, explorerPosition: HexCoord?) {
         var mapExplored = false
@@ -171,7 +189,7 @@ class ExploredRegion : IsPartOfGameInfoSerialization {
         }
     }
 
-    fun calculateStageCoords(mapMaxX: Float, mapMaxY: Float) {
+    fun calculateStageCoords(mapMaxX: Float, mapMaxY: Float, worldWrapCut: WorldWrapCut? = null) {
         shouldRecalculateCoords = false
 
         // Check if we explored the whole world wrap map horizontally
@@ -187,8 +205,13 @@ class ExploredRegion : IsPartOfGameInfoSerialization {
         var right = mapCenterX + bottomRightWorld.x
 
         // World wrap over edge check
-        if (left > mapMaxX) left = 10f
-        if (right < 0f) right = mapMaxX - 10f
+        if (worldWrapCut != null) {
+            left = (-topLeft.x.toInt() - worldWrapCut.firstColumn).mod(worldWrapCut.width) * tileRadius * 1.5f + (TileGroupMap.groupSize + 4f) / 2
+            right = left + (topLeft.x - bottomRight.x).toInt().mod(worldWrapCut.width) * tileRadius * 1.5f
+        } else {
+            if (left > mapMaxX) left = 10f
+            if (right < 0f) right = mapMaxX - 10f
+        }
 
         // Convert Y to the stage coords
         val mapCenterY = if (rectangularMap) mapMaxY * 0.5f + TileGroupMap.groupSize * 0.25f else mapMaxY * 0.5f

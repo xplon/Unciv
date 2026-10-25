@@ -1,6 +1,7 @@
 package com.unciv.ui.components.tilegroups.layers
 
 import com.badlogic.gdx.graphics.Color
+import com.badlogic.gdx.math.Vector2
 import com.badlogic.gdx.scenes.scene2d.Actor
 import com.badlogic.gdx.scenes.scene2d.Touchable
 import com.badlogic.gdx.scenes.scene2d.ui.Image
@@ -27,7 +28,8 @@ import kotlin.math.pow
 import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
-private class MapArrow(val targetTile: TileView, val arrowType: MapArrowType, val strings: TileSetStrings) {
+private class MapArrow(val targetTile: TileView, val arrowType: MapArrowType, val strings: TileSetStrings,
+                       val relativePosition: Vector2? = null) {
 
     private fun getArrowImage(imageName: String) = ImageGetter.getImage(
         strings.orFallback { getString(tileSetLocation, "Arrows/", imageName) })
@@ -287,7 +289,7 @@ class TileLayerMisc(tileGroup: TileGroup, size: Float) : TileLayer(tileGroup, si
 
         for (arrowToAdd in arrowsToDraw) {
             val targetTile = arrowToAdd.targetTile
-            val targetRelative = tileMapView.getRelativeWorldPosition(ownTileView, targetTile)
+            val targetRelative = arrowToAdd.relativePosition ?: tileMapView.getRelativeWorldPosition(ownTileView, targetTile)
 
             val targetDistance = sqrt(targetRelative.x.pow(2) + targetRelative.y.pow(2))
             val targetAngle = atan2(targetRelative.y, targetRelative.x)
@@ -471,9 +473,9 @@ class TileLayerMisc(tileGroup: TileGroup, size: Float) : TileLayer(tileGroup, si
     }
 
 
-    fun addArrow(targetTile: TileView, type: MapArrowType) {
+    fun addArrow(targetTile: TileView, type: MapArrowType, relativePosition: Vector2? = null) {
         if (targetTile.position() != tileGroup.tileView.position())
-            arrowsToDraw.add(MapArrow(targetTile, type, strings))
+            arrowsToDraw.add(MapArrow(targetTile, type, strings, relativePosition))
     }
 
     fun resetArrows() {

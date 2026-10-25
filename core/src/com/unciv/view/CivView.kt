@@ -5,6 +5,7 @@ import com.unciv.logic.city.City
 import com.unciv.logic.civilization.Civilization
 import com.unciv.logic.civilization.managers.ReligionState
 import com.unciv.logic.civilization.managers.VictoryManager
+import com.unciv.logic.map.WorldWrapCut
 import com.unciv.logic.map.tile.ImprovementBuildingProblem
 import com.unciv.models.Counter
 import com.unciv.models.Religion
@@ -31,6 +32,8 @@ class CivView(civ: Civilization,
     @Readonly fun getTradeView(otherCiv: ForeignCivView): TradeView = TradeView(civ, otherCiv.unwrap(), gameView)
 
     // Data retrieval
+    @Readonly fun getWorldWrapCut(previous: WorldWrapCut? = null): WorldWrapCut? =
+        civ.exploredRegion.getWorldWrapCut(previous)
     @Readonly fun hasStatToBuy(stat: Stat, price: Int): Boolean = civ.hasStatToBuy(stat, price)
 
     @Readonly fun canSeeTile(tileView: TileView): Boolean = tileView.unwrap().isVisible(civ)

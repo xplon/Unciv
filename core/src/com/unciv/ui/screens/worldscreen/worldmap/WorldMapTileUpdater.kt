@@ -117,7 +117,8 @@ object WorldMapTileUpdater {
 
         val isAirUnit = unitView.isAirUnit()
         val moveTileOverlayColor = if (unitView.isPreparingParadrop()) Color.BLUE else Color.WHITE
-        val tilesInMoveRange = unitView.getReachableTilesInCurrentTurn()
+        val movementCut = if (isAirUnit || unitView.isPreparingParadrop()) null else worldWrapCut
+        val tilesInMoveRange = unitView.getReachableTilesInCurrentTurn(movementCut)
         // Prepare special Nuke blast radius display
         val nukeBlastRadius = if (unitView.isNuclearWeapon() && selectedTile != null && selectedTile != unitView.getTile())
             unitView.getNukeBlastRadius() else -1
@@ -183,7 +184,7 @@ object WorldMapTileUpdater {
 
         // Z-Layer: 5
         // Highlight movement destination tile
-        if (unitView.isMoving()) {
+        if (unitView.isMoving() && isMovementDestinationOnDisplayedCopy(unitView)) {
             tileGroups[unitView.getMovementDestination()]!!.layerOverlay.showHighlight(Color.WHITE, 0.7f)
         }
 

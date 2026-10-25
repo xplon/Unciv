@@ -13,6 +13,7 @@ import com.unciv.logic.civilization.Civilization
 import com.unciv.logic.civilization.NotificationCategory
 import com.unciv.logic.civilization.NotificationIcon
 import com.unciv.logic.map.HexCoord
+import com.unciv.logic.map.WorldWrapCut
 import com.unciv.logic.map.mapunit.movement.UnitMovement
 import com.unciv.logic.map.tile.Tile
 import com.unciv.models.Counter
@@ -290,6 +291,21 @@ class MapUnit : IsPartOfGameInfoSerialization {
     @Readonly fun isSleepingUntilHealed() = isSleeping() && isActionUntilHealed()
 
     @Readonly fun isMoving() = action?.startsWith("moveTo") == true
+
+    /** Only a manual unfolded-map order has a cut. Older two-coordinate orders remain valid. */
+    @Readonly
+    fun getMovementWorldWrapCut(): WorldWrapCut? {
+        if (!isMoving() || !currentTile.tileMap.mapParameters.worldWrap) return null
+        val firstColumn = action!!.substringAfter("moveTo ").split(',').getOrNull(2)?.toIntOrNull()
+            ?: return null
+        return WorldWrapCut(firstColumn, currentTile.tileMap.maxLongitude * 2)
+    }
+
+    fun setMoveToAction(destination: Tile, worldWrapCut: WorldWrapCut? = null) {
+        val position = destination.position
+        action = "moveTo ${position.x},${position.y}"
+        if (worldWrapCut != null) action += ",${worldWrapCut.firstColumn}"
+    }
     @Readonly
     fun getMovementDestination(): Tile {
         val destination = action!!.replace("moveTo ", "").split(",").dropLastWhile { it.isEmpty() }
@@ -918,12 +934,13 @@ class MapUnit : IsPartOfGameInfoSerialization {
 
         if (isMoving()) {
             val destinationTile = getMovementDestination()
-            if (!movement.canReach(destinationTile)) { // That tile that we were moving towards is now unreachable -
+            val orderedMovement = movement.withWorldWrapCut(getMovementWorldWrapCut())
+            if (!orderedMovement.canReach(destinationTile)) { // That tile that we were moving towards is now unreachable -
                 // for instance we headed towards an unknown tile and it's apparently unreachable
                 action = null
                 return
             }
-            val gotTo = movement.headTowards(destinationTile)
+            val gotTo = orderedMovement.headTowards(destinationTile)
             if (gotTo == currentTile) { // We didn't move at all
                 // pathway blocked? Are we still at the same spot as start of turn?
                 if (movementMemories.last().position == currentTile.position)
